@@ -1217,7 +1217,7 @@ function Footer() {
       </div>
       <div className="border-t border-cream/10">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 py-5 text-xs text-cream/50 text-center">
-          © 2026 Dynamic Dusters (Pty) Ltd. All Rights Reserved.
+          Subsidiary of SolveX Systems (Pty) Ltd
         </div>
       </div>
     </footer>
