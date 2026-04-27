@@ -188,6 +188,235 @@ const isSunday = (iso) => {
   return new Date(Date.UTC(y, m - 1, d)).getUTCDay() === 0
 }
 
+/* ============================================================
+ * Motion utilities
+ * ============================================================ */
+
+function usePrefersReducedMotion() {
+  const [reduced, setReduced] = useState(false)
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)')
+    setReduced(mq.matches)
+    const handler = (e) => setReduced(e.matches)
+    mq.addEventListener?.('change', handler)
+    return () => mq.removeEventListener?.('change', handler)
+  }, [])
+  return reduced
+}
+
+/* IntersectionObserver-based reveal — adds .is-visible when in view. */
+function useReveal(options = {}) {
+  const ref = useRef(null)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      el.classList.add('is-visible')
+      return
+    }
+    const obs = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            el.classList.add('is-visible')
+            obs.unobserve(el)
+          }
+        })
+      },
+      { threshold: 0.15, rootMargin: '0px 0px -50px 0px', ...options }
+    )
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [])
+  return ref
+}
+
+function Reveal({ as: Tag = 'div', delay = 0, className = '', children, ...rest }) {
+  const ref = useReveal()
+  return (
+    <Tag
+      ref={ref}
+      className={`reveal ${className}`}
+      style={{ '--reveal-delay': `${delay}ms` }}
+      {...rest}
+    >
+      {children}
+    </Tag>
+  )
+}
+
+/* Animated number — eases from previous value to current `value`. */
+function AnimatedNumber({ value, duration = 600 }) {
+  const [display, setDisplay] = useState(value)
+  const fromRef = useRef(value)
+  const startRef = useRef(0)
+  const rafRef = useRef(0)
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setDisplay(value)
+      fromRef.current = value
+      return
+    }
+    cancelAnimationFrame(rafRef.current)
+    const from = fromRef.current
+    const to = value
+    if (from === to) return
+    startRef.current = performance.now()
+    const tick = (now) => {
+      const t = Math.min(1, (now - startRef.current) / duration)
+      const eased = 1 - Math.pow(1 - t, 3)
+      const v = Math.round(from + (to - from) * eased)
+      setDisplay(v)
+      if (t < 1) {
+        rafRef.current = requestAnimationFrame(tick)
+      } else {
+        fromRef.current = to
+      }
+    }
+    rafRef.current = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(rafRef.current)
+  }, [value, duration])
+  return <>{formatRand(display)}</>
+}
+
+/* Cursor glow follower — single fixed div with smoothed (lerp) tracking. */
+function CursorGlow() {
+  const ref = useRef(null)
+  const reduced = usePrefersReducedMotion()
+  useEffect(() => {
+    if (reduced) return
+    if (window.matchMedia('(hover: none)').matches) return
+    const el = ref.current
+    if (!el) return
+    let tx = window.innerWidth / 2, ty = window.innerHeight / 2
+    let cx = tx, cy = ty
+    let raf = 0
+    const onMove = (e) => {
+      tx = e.clientX
+      ty = e.clientY
+      el.classList.add('is-active')
+    }
+    const onLeave = () => el.classList.remove('is-active')
+    const tick = () => {
+      cx += (tx - cx) * 0.15
+      cy += (ty - cy) * 0.15
+      el.style.transform = `translate3d(${cx}px, ${cy}px, 0) translate(-50%, -50%)`
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    window.addEventListener('mousemove', onMove, { passive: true })
+    document.addEventListener('mouseleave', onLeave)
+    return () => {
+      cancelAnimationFrame(raf)
+      window.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseleave', onLeave)
+    }
+  }, [reduced])
+  return <div ref={ref} className="cursor-glow" aria-hidden />
+}
+
+/* Generic 3D tilt — pass through a wrapper or use the hook directly. */
+function useTilt({ max = 8, scale = 1.02 } = {}) {
+  const ref = useRef(null)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    if (window.matchMedia('(hover: none)').matches) return
+    let raf = 0
+    const onMove = (e) => {
+      const r = el.getBoundingClientRect()
+      const px = (e.clientX - r.left) / r.width
+      const py = (e.clientY - r.top) / r.height
+      const rx = (0.5 - py) * max * 2
+      const ry = (px - 0.5) * max * 2
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => {
+        el.style.transform = `perspective(800px) rotateX(${rx.toFixed(2)}deg) rotateY(${ry.toFixed(2)}deg) scale(${scale})`
+      })
+    }
+    const onLeave = () => {
+      cancelAnimationFrame(raf)
+      el.style.transform = ''
+    }
+    el.addEventListener('mousemove', onMove)
+    el.addEventListener('mouseleave', onLeave)
+    return () => {
+      cancelAnimationFrame(raf)
+      el.removeEventListener('mousemove', onMove)
+      el.removeEventListener('mouseleave', onLeave)
+    }
+  }, [max, scale])
+  return ref
+}
+
+/* Magnetic effect — element translates toward the cursor when hovered. */
+function useMagnetic({ strength = 0.35, radius = 120 } = {}) {
+  const ref = useRef(null)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    if (window.matchMedia('(hover: none)').matches) return
+    let raf = 0
+    const onMove = (e) => {
+      const r = el.getBoundingClientRect()
+      const cx = r.left + r.width / 2
+      const cy = r.top + r.height / 2
+      const dx = e.clientX - cx
+      const dy = e.clientY - cy
+      const dist = Math.sqrt(dx * dx + dy * dy)
+      if (dist > radius) {
+        cancelAnimationFrame(raf)
+        raf = requestAnimationFrame(() => { el.style.transform = '' })
+        return
+      }
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => {
+        el.style.transform = `translate3d(${dx * strength}px, ${dy * strength}px, 0)`
+      })
+    }
+    const onLeave = () => {
+      cancelAnimationFrame(raf)
+      el.style.transform = ''
+    }
+    window.addEventListener('mousemove', onMove, { passive: true })
+    el.addEventListener('mouseleave', onLeave)
+    return () => {
+      cancelAnimationFrame(raf)
+      window.removeEventListener('mousemove', onMove)
+      el.removeEventListener('mouseleave', onLeave)
+    }
+  }, [strength, radius])
+  return ref
+}
+
+/* Parallax — translates an element based on global pointer position. */
+function useParallax({ strength = 12 } = {}) {
+  const ref = useRef(null)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    if (window.matchMedia('(hover: none)').matches) return
+    let raf = 0
+    const onMove = (e) => {
+      const x = (e.clientX / window.innerWidth - 0.5) * strength
+      const y = (e.clientY / window.innerHeight - 0.5) * strength
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => {
+        el.style.transform = `translate3d(${x.toFixed(2)}px, ${y.toFixed(2)}px, 0)`
+      })
+    }
+    window.addEventListener('mousemove', onMove, { passive: true })
+    return () => {
+      cancelAnimationFrame(raf)
+      window.removeEventListener('mousemove', onMove)
+    }
+  }, [strength])
+  return ref
+}
+
 export default function App() {
   const [pkg, setPkg] = useState('')
   const [addLaundry, setAddLaundry] = useState(false)
@@ -293,6 +522,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-cream text-ink">
+      <CursorGlow />
       <LogoSplash />
       <Header />
       <Hero />
@@ -477,38 +707,120 @@ function LogoSplash() {
 
 /* ----------------- Hero ----------------- */
 function Hero() {
+  const logoParallax = useParallax({ strength: 18 })
+  const primaryCTA = useMagnetic({ strength: 0.3, radius: 110 })
+  const ghostCTA = useMagnetic({ strength: 0.25, radius: 110 })
+
+  // Sparkle positions — fixed seed so layout is stable per render
+  const sparkles = [
+    { left: '8%',  top: '70%', size: 6,  delay: 0,    dur: 8.5 },
+    { left: '18%', top: '40%', size: 10, delay: 1500, dur: 10 },
+    { left: '28%', top: '85%', size: 8,  delay: 600,  dur: 9 },
+    { left: '46%', top: '30%', size: 7,  delay: 2200, dur: 11 },
+    { left: '58%', top: '78%', size: 9,  delay: 800,  dur: 9.5 },
+    { left: '72%', top: '20%', size: 6,  delay: 3000, dur: 10.5 },
+    { left: '82%', top: '60%', size: 11, delay: 400,  dur: 9 },
+    { left: '92%', top: '45%', size: 7,  delay: 1800, dur: 10 },
+    { left: '38%', top: '60%', size: 5,  delay: 2500, dur: 8 },
+    { left: '64%', top: '50%', size: 6,  delay: 1200, dur: 9.2 },
+  ]
+
+  const headline = ['Professional', 'Cleaning,']
+  const headlineAccent = ['Booked', 'in', 'Seconds.']
+
   return (
     <section id="top" className="hero-gradient relative overflow-hidden">
+      {/* Floating colored blobs */}
+      <div className="absolute inset-0 pointer-events-none" aria-hidden>
+        <span className="blob blob-a" />
+        <span className="blob blob-b" />
+        <span className="blob blob-c" />
+      </div>
+
+      {/* Dotted overlay */}
       <div className="hero-pattern absolute inset-0 opacity-50 pointer-events-none" />
+
+      {/* Sparkle particles */}
+      <div className="absolute inset-0 pointer-events-none" aria-hidden>
+        {sparkles.map((s, i) => (
+          <span
+            key={i}
+            className="sparkle"
+            style={{
+              left: s.left,
+              top: s.top,
+              width: s.size,
+              height: s.size,
+              animationDelay: `${s.delay}ms`,
+              animationDuration: `${s.dur}s`,
+            }}
+          />
+        ))}
+      </div>
+
       <div className="relative max-w-6xl mx-auto px-4 sm:px-6 pt-14 pb-20 sm:pt-20 sm:pb-28">
-        <div className="mb-8">
-          <LogoBadge size={120} />
+        <div ref={logoParallax} className="mb-8 inline-block">
+          <LogoBadge size={140} />
         </div>
 
         <h1 className="font-display font-extrabold text-4xl sm:text-5xl md:text-6xl tracking-tight max-w-3xl">
-          Professional Cleaning, <span className="text-brand">Booked in Seconds.</span>
+          <span className="overflow-hidden inline-block align-bottom">
+            {headline.map((w, i) => (
+              <span
+                key={i}
+                className="headline-word mr-3"
+                style={{ '--word-delay': `${i * 80 + 200}ms` }}
+              >
+                {w}
+              </span>
+            ))}
+          </span>
+          <br />
+          <span className="overflow-hidden inline-block align-bottom text-brand">
+            {headlineAccent.map((w, i) => (
+              <span
+                key={i}
+                className="headline-word mr-3"
+                style={{ '--word-delay': `${(headline.length + i) * 80 + 300}ms` }}
+              >
+                {w}
+              </span>
+            ))}
+          </span>
         </h1>
-        <p className="mt-5 text-base sm:text-lg text-muted max-w-2xl">
-          Skilled, vetted residential cleaners across Johannesburg North. Book via WhatsApp — confirmed
-          in writing within 2 hours.
+
+        <p
+          className="mt-5 text-base sm:text-lg text-muted max-w-2xl headline-word"
+          style={{ '--word-delay': '700ms' }}
+        >
+          Skilled, vetted residential cleaners across Johannesburg North, Midrand and Centurion.
+          Book via WhatsApp — confirmed in writing within 2 hours.
         </p>
 
-        <div className="mt-8 flex flex-wrap gap-3">
+        <div
+          className="mt-8 flex flex-wrap gap-3 headline-word"
+          style={{ '--word-delay': '850ms' }}
+        >
           <a
+            ref={primaryCTA}
             href="#packages"
-            className="inline-flex items-center gap-2 bg-brand text-ink px-6 py-3.5 rounded-full font-semibold shadow-card hover:shadow-cardHover hover:-translate-y-0.5 transition-all"
+            className="magnetic inline-flex items-center gap-2 bg-brand text-ink px-6 py-3.5 rounded-full font-semibold shadow-card hover:shadow-cardHover transition-shadow"
           >
             Book a Clean
           </a>
           <a
+            ref={ghostCTA}
             href="#process"
-            className="inline-flex items-center gap-2 bg-transparent border-2 border-ink/15 text-ink px-6 py-3.5 rounded-full font-semibold hover:border-ink/40 transition-colors"
+            className="magnetic inline-flex items-center gap-2 bg-white/60 backdrop-blur border-2 border-ink/15 text-ink px-6 py-3.5 rounded-full font-semibold hover:border-ink/40 transition-colors"
           >
             How It Works
           </a>
         </div>
 
-        <div className="mt-10 flex flex-wrap gap-x-6 gap-y-3 text-sm text-muted">
+        <div
+          className="mt-10 flex flex-wrap gap-x-6 gap-y-3 text-sm text-muted headline-word"
+          style={{ '--word-delay': '1000ms' }}
+        >
           <TrustItem icon={ShieldCheck} text="Vetted Cleaners" />
           <TrustItem icon={FileCheck2} text="Written Confirmation" />
           <TrustItem icon={CheckCircle2} text="Quality Guaranteed" />
@@ -533,27 +845,40 @@ function Packages({ onSelect, selected }) {
   return (
     <section id="packages" className="py-20 sm:py-24">
       <div className="max-w-6xl mx-auto px-4 sm:px-6">
-        <SectionHeading
-          eyebrow="Packages"
-          title="Choose Your Clean"
-          subtitle="Transparent pricing. Pick the package that fits — we’ll confirm the exact total when we accept your booking."
-        />
+        <Reveal>
+          <SectionHeading
+            eyebrow="Packages"
+            title="Choose Your Clean"
+            subtitle="Transparent pricing. Pick the package that fits — we’ll confirm the exact total when we accept your booking."
+          />
+        </Reveal>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mt-12">
-          {PACKAGES.map((p) => {
-            const Icon = p.icon
-            const isSelected = selected === p.id
-            return (
-              <article
-                key={p.id}
-                className={[
-                  'relative flex flex-col rounded-2xl border p-6 transition-all',
-                  p.isAddon
-                    ? 'bg-brand-soft/40 border-brand/30'
-                    : 'bg-white border-line shadow-card hover:shadow-cardHover hover:-translate-y-1',
-                  isSelected ? 'ring-2 ring-brand' : '',
-                ].join(' ')}
-              >
+          {PACKAGES.map((p, i) => (
+            <Reveal key={p.id} delay={i * 90}>
+              <PackageCard p={p} isSelected={selected === p.id} onSelect={onSelect} />
+            </Reveal>
+          ))}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function PackageCard({ p, isSelected, onSelect }) {
+  const Icon = p.icon
+  const tilt = useTilt({ max: 6, scale: 1.02 })
+  return (
+    <article
+      ref={tilt}
+      className={[
+        'tilt h-full relative flex flex-col rounded-2xl border p-6',
+        p.isAddon
+          ? 'bg-brand-soft/40 border-brand/30'
+          : 'bg-white border-line shadow-card hover:shadow-cardHover',
+        isSelected ? 'ring-2 ring-brand' : '',
+      ].join(' ')}
+    >
                 {p.isAddon && (
                   <span className="absolute top-4 right-4 text-[10px] font-bold tracking-widest uppercase bg-brand text-ink px-2 py-1 rounded-full">
                     Add-On
@@ -578,30 +903,25 @@ function Packages({ onSelect, selected }) {
                   ))}
                 </ul>
 
-                <button
-                  type="button"
-                  onClick={() => onSelect(p.id)}
-                  className={[
-                    'mt-6 inline-flex items-center justify-center gap-1.5 w-full rounded-full px-4 py-2.5 font-semibold text-sm transition-colors',
-                    isSelected
-                      ? 'bg-success text-white'
-                      : 'bg-ink text-cream hover:bg-brand hover:text-ink',
-                  ].join(' ')}
-                >
-                  {isSelected ? (
-                    <>
-                      <CheckCircle2 size={16} /> Selected
-                    </>
-                  ) : (
-                    'Select'
-                  )}
-                </button>
-              </article>
-            )
-          })}
-        </div>
-      </div>
-    </section>
+      <button
+        type="button"
+        onClick={() => onSelect(p.id)}
+        className={[
+          'mt-6 inline-flex items-center justify-center gap-1.5 w-full rounded-full px-4 py-2.5 font-semibold text-sm transition-colors',
+          isSelected
+            ? 'bg-success text-white'
+            : 'bg-ink text-cream hover:bg-brand hover:text-ink',
+        ].join(' ')}
+      >
+        {isSelected ? (
+          <>
+            <CheckCircle2 size={16} /> Selected
+          </>
+        ) : (
+          'Select'
+        )}
+      </button>
+    </article>
   )
 }
 
@@ -616,17 +936,19 @@ function HowItWorks() {
   return (
     <section id="process" className="py-20 sm:py-24 bg-white border-y border-line">
       <div className="max-w-6xl mx-auto px-4 sm:px-6">
-        <SectionHeading
-          eyebrow="How it works"
-          title="Four simple steps."
-          subtitle="No phone tag. No quote forms. Just a straight path from booking to a clean home."
-        />
+        <Reveal>
+          <SectionHeading
+            eyebrow="How it works"
+            title="Four simple steps."
+            subtitle="No phone tag. No quote forms. Just a straight path from booking to a clean home."
+          />
+        </Reveal>
 
         <ol className="mt-12 grid grid-cols-1 md:grid-cols-4 gap-6 relative">
           {steps.map((s, i) => (
-            <li key={s.n} className="relative">
+            <Reveal as="li" key={s.n} delay={i * 120} className="relative">
               <div className="flex md:flex-col items-start md:items-start gap-4">
-                <div className="w-11 h-11 rounded-full bg-brand text-ink font-display font-extrabold text-lg grid place-items-center shadow-card flex-shrink-0">
+                <div className="w-11 h-11 rounded-full bg-brand text-ink font-display font-extrabold text-lg grid place-items-center shadow-card flex-shrink-0 hover:scale-110 hover:rotate-6 transition-transform">
                   {s.n}
                 </div>
                 <div>
@@ -637,7 +959,7 @@ function HowItWorks() {
               {i < steps.length - 1 && (
                 <div className="hidden md:block absolute top-5 left-[calc(100%-1rem)] w-[calc(100%-2.5rem)] h-px border-t-2 border-dashed border-brand/40" />
               )}
-            </li>
+            </Reveal>
           ))}
         </ol>
       </div>
@@ -675,11 +997,13 @@ function BookingForm(props) {
   return (
     <section id="book" className="py-20 sm:py-24 bg-cream">
       <div className="max-w-3xl mx-auto px-4 sm:px-6">
-        <SectionHeading
-          eyebrow="Book"
-          title="Book Your Clean"
-          subtitle="Fill in your details — we’ll prep a WhatsApp message you can send with one tap."
-        />
+        <Reveal>
+          <SectionHeading
+            eyebrow="Book"
+            title="Book Your Clean"
+            subtitle="Fill in your details — we’ll prep a WhatsApp message you can send with one tap."
+          />
+        </Reveal>
 
         <form
           ref={formCardRef}
@@ -968,7 +1292,9 @@ function PriceSummary({ pkg, bedrooms, bathrooms, addLaundry, laundryLoads }) {
       </ul>
       <div className="mt-3 pt-3 border-t border-brand/25 flex items-baseline justify-between gap-3">
         <span className="font-display font-bold text-ink">Estimated total</span>
-        <span className="font-display font-extrabold text-2xl text-ink tabular-nums">{formatRand(p.total)}</span>
+        <span className="font-display font-extrabold text-2xl text-ink tabular-nums">
+          <AnimatedNumber value={p.total} />
+        </span>
       </div>
       <p className="mt-2 text-xs text-muted leading-relaxed">
         Confirmed in writing when we accept your booking. Travel surcharge may apply for areas
@@ -1095,17 +1421,20 @@ function ServiceArea() {
   return (
     <section id="area" className="py-20 sm:py-24 bg-white border-y border-line">
       <div className="max-w-5xl mx-auto px-4 sm:px-6 text-center">
-        <SectionHeading
-          eyebrow="Coverage"
-          title="Where We Clean"
-          subtitle="From Johannesburg North through Midrand to Centurion. Three regions, one consistent standard."
-          centered
-        />
+        <Reveal>
+          <SectionHeading
+            eyebrow="Coverage"
+            title="Where We Clean"
+            subtitle="From Johannesburg North through Midrand to Centurion. Three regions, one consistent standard."
+            centered
+          />
+        </Reveal>
         <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-5">
-          {SUBURB_GROUPS.map((g) => (
-            <div
+          {SUBURB_GROUPS.map((g, i) => (
+            <Reveal
               key={g.region}
-              className="rounded-2xl border border-line bg-cream/60 p-6 text-left"
+              delay={i * 110}
+              className="rounded-2xl border border-line bg-cream/60 p-6 text-left hover:border-brand/40 hover:shadow-card transition-all"
             >
               <div className="flex items-center gap-2 mb-4">
                 <MapPin size={16} className="text-brand-dark" />
@@ -1115,13 +1444,13 @@ function ServiceArea() {
                 {g.suburbs.map((s) => (
                   <span
                     key={s}
-                    className="inline-flex items-center bg-white border border-line rounded-full px-3 py-1 text-xs font-semibold text-ink/85"
+                    className="inline-flex items-center bg-white border border-line rounded-full px-3 py-1 text-xs font-semibold text-ink/85 hover:bg-brand/10 hover:border-brand/50 hover:scale-105 transition-all cursor-default"
                   >
                     {s}
                   </span>
                 ))}
               </div>
-            </div>
+            </Reveal>
           ))}
         </div>
         <p className="mt-8 text-sm text-muted">
@@ -1137,12 +1466,14 @@ function FAQ({ openFaq, setOpenFaq }) {
   return (
     <section id="faq" className="py-20 sm:py-24">
       <div className="max-w-3xl mx-auto px-4 sm:px-6">
-        <SectionHeading eyebrow="FAQ" title="Questions, answered." centered />
+        <Reveal>
+          <SectionHeading eyebrow="FAQ" title="Questions, answered." centered />
+        </Reveal>
         <div className="mt-10 divide-y divide-line border-y border-line">
           {FAQS.map((f, i) => {
             const open = openFaq === i
             return (
-              <div key={f.q}>
+              <Reveal as="div" delay={i * 60} key={f.q}>
                 <button
                   type="button"
                   onClick={() => setOpenFaq(open ? null : i)}
@@ -1163,7 +1494,7 @@ function FAQ({ openFaq, setOpenFaq }) {
                 {open && (
                   <p className="pb-6 text-muted text-sm sm:text-base animate-fadeIn">{f.a}</p>
                 )}
-              </div>
+              </Reveal>
             )
           })}
         </div>

@@ -13,6 +13,7 @@ body {
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* Default cursor stays — only the custom glow follows */
 }
 
 h1, h2, h3, h4 {
@@ -21,23 +22,167 @@ h1, h2, h3, h4 {
   letter-spacing: -0.01em;
 }
 
-/* Focus visibility for accessibility */
+/* Focus visibility */
 *:focus-visible {
   outline: 2px solid #F5A623;
   outline-offset: 2px;
   border-radius: 4px;
 }
 
-/* Hero gradient */
+/* ---------- Hero gradient + dotted overlay ---------- */
 .hero-gradient {
   background:
     radial-gradient(ellipse 80% 60% at 80% 20%, rgba(245, 166, 35, 0.25), transparent 60%),
     radial-gradient(ellipse 60% 50% at 10% 80%, rgba(245, 166, 35, 0.18), transparent 60%),
     linear-gradient(180deg, #FFFBF4 0%, #FFF6E5 100%);
 }
-
-/* Subtle dotted background pattern for hero */
 .hero-pattern {
   background-image: radial-gradient(rgba(245, 166, 35, 0.18) 1px, transparent 1px);
   background-size: 22px 22px;
+}
+
+/* ---------- Cursor glow ---------- */
+.cursor-glow {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 480px;
+  height: 480px;
+  pointer-events: none;
+  border-radius: 9999px;
+  background: radial-gradient(circle at center, rgba(245, 166, 35, 0.28) 0%, rgba(245, 166, 35, 0.12) 35%, transparent 70%);
+  mix-blend-mode: multiply;
+  transform: translate3d(-50%, -50%, 0);
+  z-index: 1;
+  opacity: 0;
+  transition: opacity 400ms ease-out;
+  will-change: transform;
+}
+.cursor-glow.is-active {
+  opacity: 1;
+}
+@media (hover: none) {
+  .cursor-glow { display: none; }
+}
+
+/* ---------- Hero floating blobs ---------- */
+.blob {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(60px);
+  opacity: 0.55;
+  pointer-events: none;
+  will-change: transform;
+}
+.blob-a {
+  width: 460px; height: 460px;
+  background: radial-gradient(circle at 30% 30%, #F5A623, transparent 65%);
+  top: -120px; left: -100px;
+  animation: blobDrift1 22s ease-in-out infinite;
+}
+.blob-b {
+  width: 380px; height: 380px;
+  background: radial-gradient(circle at 60% 40%, #FFD27A, transparent 65%);
+  top: 30%; right: -120px;
+  animation: blobDrift2 26s ease-in-out infinite;
+}
+.blob-c {
+  width: 320px; height: 320px;
+  background: radial-gradient(circle at 50% 50%, #FFB347, transparent 70%);
+  bottom: -100px; left: 35%;
+  animation: blobDrift3 30s ease-in-out infinite;
+}
+@keyframes blobDrift1 {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50%      { transform: translate3d(60px, 40px, 0) scale(1.08); }
+}
+@keyframes blobDrift2 {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50%      { transform: translate3d(-80px, 60px, 0) scale(0.92); }
+}
+@keyframes blobDrift3 {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50%      { transform: translate3d(50px, -50px, 0) scale(1.1); }
+}
+
+/* ---------- Floating sparkle particles ---------- */
+.sparkle {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 9999px;
+  background: radial-gradient(circle, #F5A623 0%, rgba(245, 166, 35, 0.4) 60%, transparent 100%);
+  pointer-events: none;
+  opacity: 0;
+  animation: sparkleFloat 9s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+@keyframes sparkleFloat {
+  0%   { transform: translateY(20px) scale(0.6); opacity: 0; }
+  20%  { opacity: 0.85; }
+  80%  { opacity: 0.6; }
+  100% { transform: translateY(-180px) scale(1.1); opacity: 0; }
+}
+
+/* ---------- Scroll reveal ---------- */
+.reveal {
+  opacity: 0;
+  transform: translateY(28px);
+  transition: opacity 700ms cubic-bezier(0.22, 1, 0.36, 1),
+              transform 700ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition-delay: var(--reveal-delay, 0ms);
+  will-change: opacity, transform;
+}
+.reveal.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ---------- 3D tilt cards ---------- */
+.tilt {
+  transform-style: preserve-3d;
+  transition: transform 200ms ease-out, box-shadow 300ms ease-out;
+  will-change: transform;
+}
+.tilt-inner {
+  transform: translateZ(20px);
+  transition: transform 200ms ease-out;
+}
+
+/* ---------- Hero headline word-by-word reveal ---------- */
+.headline-word {
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(40%);
+  animation: wordIn 800ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation-delay: var(--word-delay, 0ms);
+  will-change: opacity, transform;
+}
+@keyframes wordIn {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ---------- Magnetic button micro-tilt ---------- */
+.magnetic {
+  transition: transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+/* ---------- Section anchor offset (sticky header is 64px) ---------- */
+section[id] {
+  scroll-margin-top: 80px;
+}
+
+/* ---------- Reduced motion: turn everything calm ---------- */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .blob,
+  .sparkle,
+  .headline-word { animation: none !important; }
+  .blob { transform: none !important; }
+  .sparkle { opacity: 0 !important; }
+  .headline-word { opacity: 1 !important; transform: none !important; }
+  .reveal { opacity: 1 !important; transform: none !important; transition: none !important; }
+  .cursor-glow { display: none !important; }
+  .tilt, .magnetic { transition: none !important; transform: none !important; }
 }
