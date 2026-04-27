@@ -79,16 +79,24 @@ const PACKAGES = [
   },
 ]
 
-const SUBURBS = [
-  'Sandton',
-  'Fourways',
-  'Bryanston',
-  'Morningside',
-  'Paulshof',
-  'Rivonia',
-  'Hurlingham',
-  'Other (specify in message)',
+// Service-area suburbs grouped by region. Used in the form dropdown
+// (rendered as <optgroup>) and in the visual ServiceArea section.
+const SUBURB_GROUPS = [
+  {
+    region: 'Johannesburg North',
+    suburbs: ['Sandton', 'Fourways', 'Bryanston', 'Morningside', 'Paulshof', 'Rivonia', 'Hurlingham'],
+  },
+  {
+    region: 'Midrand',
+    suburbs: ['Midrand', 'Halfway House', 'Noordwyk', 'Vorna Valley', 'Carlswald', 'Kyalami', 'Waterfall'],
+  },
+  {
+    region: 'Centurion',
+    suburbs: ['Centurion', 'Irene', 'Lyttelton', 'Eldoraigne', 'Wierda Park', 'Doringkloof'],
+  },
 ]
+
+const OTHER_SUBURB = 'Other (specify in message)'
 
 const PROPERTY_TYPES = ['Apartment', 'Townhouse', 'House', 'Airbnb', 'Other']
 
@@ -120,6 +128,46 @@ const FAQS = [
     a: 'No problem — we charge an overflow hourly rate beyond the package duration. We’ll always agree this with you in writing before the cleaner arrives.',
   },
 ]
+
+/* Pricing model
+ * Base prices match the package cards (subject to CEO sign-off before
+ * launch). Surcharges apply per extra room beyond the package's
+ * baseline so larger homes get a fair, predictable estimate.
+ */
+const PRICING = {
+  packages: {
+    'two-hour':  { base: 350,  baseBedrooms: 1, baseBathrooms: 1, label: 'Two-Hour Express' },
+    'half-day':  { base: 625,  baseBedrooms: 3, baseBathrooms: 2, label: 'Half-Day Clean' },
+    'full-day':  { base: 1050, baseBedrooms: 4, baseBathrooms: 3, label: 'Full-Day Deep Clean' },
+  },
+  perExtraBedroom: 75,
+  perExtraBathroom: 50,
+  laundryPerLoad: 100,
+}
+
+function calcPrice({ pkg, bedrooms, bathrooms, addLaundry, laundryLoads }) {
+  const def = PRICING.packages[pkg]
+  if (!def) return null // 'other' or unset → no estimate
+  const extraBeds = Math.max(0, bedrooms - def.baseBedrooms)
+  const extraBaths = Math.max(0, bathrooms - def.baseBathrooms)
+  const bedroomCharge = extraBeds * PRICING.perExtraBedroom
+  const bathroomCharge = extraBaths * PRICING.perExtraBathroom
+  const laundryCharge = addLaundry ? laundryLoads * PRICING.laundryPerLoad : 0
+  const total = def.base + bedroomCharge + bathroomCharge + laundryCharge
+  return {
+    label: def.label,
+    base: def.base,
+    extraBeds,
+    extraBaths,
+    bedroomCharge,
+    bathroomCharge,
+    laundryCharge,
+    laundryLoads: addLaundry ? laundryLoads : 0,
+    total,
+  }
+}
+
+const formatRand = (n) => `R${n.toLocaleString('en-ZA')}`
 
 const todayIso = () => {
   const d = new Date()
@@ -192,6 +240,7 @@ export default function App() {
   const buildMessage = () => {
     const pkgLabel = PACKAGES.find((p) => p.id === pkg)?.name ?? 'Other / Not sure'
     const laundry = addLaundry ? `Yes, ${laundryLoads} load${laundryLoads > 1 ? 's' : ''}` : 'No'
+    const estimate = calcPrice({ pkg, bedrooms, bathrooms, addLaundry, laundryLoads })
     const lines = [
       "Hi Dynamic Dusters! I'd like to book a clean.",
       '',
@@ -210,12 +259,17 @@ export default function App() {
       '👤 CONTACT',
       `- Name: ${name.trim()}`,
       '',
+      '💰 ESTIMATE',
+      estimate
+        ? `- ${formatRand(estimate.total)} (subject to your confirmation)`
+        : '- To be quoted by Dynamic Dusters',
+      '',
       '📝 NOTES',
       notes.trim() ? notes.trim() : 'None',
       '',
       "✓ I confirm I'll have all cleaning products & equipment ready per the Products Checklist.",
       '',
-      'Please confirm availability and total cost. Thanks!',
+      'Please confirm availability and final total. Thanks!',
     ]
     return lines.join('\n')
   }
@@ -458,7 +512,7 @@ function Hero() {
           <TrustItem icon={ShieldCheck} text="Vetted Cleaners" />
           <TrustItem icon={FileCheck2} text="Written Confirmation" />
           <TrustItem icon={CheckCircle2} text="Quality Guaranteed" />
-          <TrustItem icon={MapPin} text="Sandton · Fourways · Bryanston" />
+          <TrustItem icon={MapPin} text="Sandton · Midrand · Centurion" />
         </div>
       </div>
     </section>
@@ -726,7 +780,19 @@ function BookingForm(props) {
               {/* Suburb + Property type */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                 <Field label="Suburb" error={errors.suburb} dataField="suburb">
-                  <Select value={suburb} onChange={setSuburb} placeholder="Select your suburb" options={SUBURBS} hasError={!!errors.suburb} />
+                  <Select
+                    value={suburb}
+                    onChange={setSuburb}
+                    placeholder="Select your suburb"
+                    groups={SUBURB_GROUPS}
+                    extraOptions={[OTHER_SUBURB]}
+                    hasError={!!errors.suburb}
+                  />
+                  {suburb === OTHER_SUBURB && (
+                    <p className="mt-2 text-xs text-muted">
+                      Outside our usual area? A small travel surcharge may apply — we’ll quote in writing.
+                    </p>
+                  )}
                 </Field>
                 <Field label="Property type" error={errors.propertyType} dataField="propertyType">
                   <Select value={propertyType} onChange={setPropertyType} placeholder="Select a type" options={PROPERTY_TYPES} hasError={!!errors.propertyType} />
@@ -789,6 +855,15 @@ function BookingForm(props) {
                 {errors.ack && <p className="mt-1.5 text-xs font-medium text-red-600">{errors.ack}</p>}
               </div>
 
+              {/* Live price estimate */}
+              <PriceSummary
+                pkg={pkg}
+                bedrooms={bedrooms}
+                bathrooms={bathrooms}
+                addLaundry={addLaundry}
+                laundryLoads={laundryLoads}
+              />
+
               {/* Submit */}
               <button
                 type="submit"
@@ -849,6 +924,60 @@ function Field({ label, error, dataField, children }) {
   )
 }
 
+function PriceSummary({ pkg, bedrooms, bathrooms, addLaundry, laundryLoads }) {
+  if (!pkg) {
+    return (
+      <div className="rounded-2xl border border-line bg-cream/60 p-5 text-sm text-muted">
+        Choose a package above to see your estimated total.
+      </div>
+    )
+  }
+  if (pkg === 'other') {
+    return (
+      <div className="rounded-2xl border border-brand/25 bg-brand-soft/30 p-5 text-sm text-ink/85">
+        We’ll recommend the right package and quote your total when we accept the booking.
+      </div>
+    )
+  }
+
+  const p = calcPrice({ pkg, bedrooms, bathrooms, addLaundry, laundryLoads })
+  if (!p) return null
+
+  const lines = [
+    { label: `${p.label}`, amount: p.base },
+  ]
+  if (p.extraBeds > 0) lines.push({ label: `+ ${p.extraBeds} extra bedroom${p.extraBeds > 1 ? 's' : ''}`, amount: p.bedroomCharge })
+  if (p.extraBaths > 0) lines.push({ label: `+ ${p.extraBaths} extra bathroom${p.extraBaths > 1 ? 's' : ''}`, amount: p.bathroomCharge })
+  if (p.laundryCharge > 0) lines.push({ label: `+ Laundry × ${p.laundryLoads} load${p.laundryLoads > 1 ? 's' : ''}`, amount: p.laundryCharge })
+
+  return (
+    <div className="rounded-2xl border-2 border-brand/30 bg-brand-soft/30 p-5 sm:p-6">
+      <div className="flex items-baseline justify-between gap-3">
+        <h3 className="font-display font-bold text-base text-ink">Your estimate</h3>
+        <span className="text-[11px] uppercase tracking-widest font-semibold text-brand-dark">Live</span>
+      </div>
+      <ul className="mt-3 space-y-1.5 text-sm">
+        {lines.map((l, i) => (
+          <li key={i} className="flex items-center justify-between gap-3">
+            <span className={i === 0 ? 'font-semibold text-ink' : 'text-ink/80'}>{l.label}</span>
+            <span className={i === 0 ? 'font-semibold tabular-nums' : 'text-ink/80 tabular-nums'}>
+              {formatRand(l.amount)}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <div className="mt-3 pt-3 border-t border-brand/25 flex items-baseline justify-between gap-3">
+        <span className="font-display font-bold text-ink">Estimated total</span>
+        <span className="font-display font-extrabold text-2xl text-ink tabular-nums">{formatRand(p.total)}</span>
+      </div>
+      <p className="mt-2 text-xs text-muted leading-relaxed">
+        Confirmed in writing when we accept your booking. Travel surcharge may apply for areas
+        outside our usual zones.
+      </p>
+    </div>
+  )
+}
+
 function RadioDot({ active, className = '' }) {
   return (
     <span
@@ -895,7 +1024,7 @@ function inputCls(hasError) {
   ].join(' ')
 }
 
-function Select({ value, onChange, options, placeholder, hasError }) {
+function Select({ value, onChange, options, groups, extraOptions, placeholder, hasError }) {
   return (
     <div className="relative">
       <select
@@ -906,7 +1035,22 @@ function Select({ value, onChange, options, placeholder, hasError }) {
         <option value="" disabled>
           {placeholder}
         </option>
-        {options.map((o) => (
+        {groups
+          ? groups.map((g) => (
+              <optgroup key={g.region} label={g.region}>
+                {g.suburbs.map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+              </optgroup>
+            ))
+          : (options || []).map((o) => (
+              <option key={o} value={o}>
+                {o}
+              </option>
+            ))}
+        {extraOptions?.map((o) => (
           <option key={o} value={o}>
             {o}
           </option>
@@ -948,23 +1092,40 @@ function Stepper({ value, setValue, min = 0, max = 99, suffixOnMax }) {
 
 /* ----------------- Service Area ----------------- */
 function ServiceArea() {
-  const suburbs = ['Sandton', 'Fourways', 'Bryanston', 'Morningside', 'Paulshof', 'Rivonia', 'Hurlingham']
   return (
     <section id="area" className="py-20 sm:py-24 bg-white border-y border-line">
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 text-center">
-        <SectionHeading eyebrow="Coverage" title="Where We Clean" centered />
-        <div className="mt-10 flex flex-wrap justify-center gap-2.5">
-          {suburbs.map((s) => (
-            <span
-              key={s}
-              className="inline-flex items-center gap-1.5 bg-cream border border-line rounded-full px-4 py-2 text-sm font-semibold text-ink"
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 text-center">
+        <SectionHeading
+          eyebrow="Coverage"
+          title="Where We Clean"
+          subtitle="From Johannesburg North through Midrand to Centurion. Three regions, one consistent standard."
+          centered
+        />
+        <div className="mt-12 grid grid-cols-1 md:grid-cols-3 gap-5">
+          {SUBURB_GROUPS.map((g) => (
+            <div
+              key={g.region}
+              className="rounded-2xl border border-line bg-cream/60 p-6 text-left"
             >
-              <MapPin size={14} className="text-brand-dark" /> {s}
-            </span>
+              <div className="flex items-center gap-2 mb-4">
+                <MapPin size={16} className="text-brand-dark" />
+                <h3 className="font-display font-bold text-base text-ink">{g.region}</h3>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {g.suburbs.map((s) => (
+                  <span
+                    key={s}
+                    className="inline-flex items-center bg-white border border-line rounded-full px-3 py-1 text-xs font-semibold text-ink/85"
+                  >
+                    {s}
+                  </span>
+                ))}
+              </div>
+            </div>
           ))}
         </div>
-        <p className="mt-6 text-sm text-muted">
-          Outside this area? Send us a message — a small travel surcharge may apply.
+        <p className="mt-8 text-sm text-muted">
+          Outside these areas? Send us a message — a small travel surcharge may apply.
         </p>
       </div>
     </section>
