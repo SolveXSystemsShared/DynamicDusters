@@ -239,6 +239,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-cream text-ink">
+      <LogoSplash />
       <Header />
       <Hero />
       <Packages onSelect={handleSelectPackage} selected={pkg} />
@@ -293,7 +294,7 @@ function Header() {
     <header className="sticky top-0 z-30 bg-cream/85 backdrop-blur border-b border-line">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
         <a href="#top" className="flex items-center gap-2.5">
-          <LogoBadge size={36} />
+          <LogoBadge id="header-logo" size={40} />
           <span className="font-display font-bold text-ink tracking-tight text-base sm:text-lg">
             Dynamic Dusters
           </span>
@@ -315,14 +316,107 @@ function Header() {
   )
 }
 
-function LogoBadge({ size = 56 }) {
+function LogoBadge({ size = 56, id }) {
+  return (
+    <img
+      id={id}
+      src="/logo.png"
+      alt="Dynamic Dusters"
+      width={size}
+      height={size}
+      style={{ width: size, height: size }}
+      className="object-contain select-none"
+      draggable={false}
+    />
+  )
+}
+
+/* ----------------- Logo Splash (FLIP intro) ----------------- */
+function LogoSplash() {
+  const [phase, setPhase] = useState('big') // 'big' | 'flying' | 'done'
+  const [target, setTarget] = useState(null) // { x, y, size } screen coords of header logo
+  const splashRef = useRef(null)
+
+  useEffect(() => {
+    // Lock scroll while splash is showing
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+
+    // Wait a frame for header to mount, then measure the header logo's final spot
+    const measure = () => {
+      const el = document.getElementById('header-logo')
+      if (!el) {
+        // header not ready — try again next frame
+        requestAnimationFrame(measure)
+        return
+      }
+      const r = el.getBoundingClientRect()
+      setTarget({
+        x: r.left + r.width / 2,
+        y: r.top + r.height / 2,
+        size: r.width,
+      })
+      // Hold the big state briefly, then fly
+      setTimeout(() => setPhase('flying'), 700)
+    }
+    requestAnimationFrame(measure)
+
+    return () => {
+      document.body.style.overflow = prev
+    }
+  }, [])
+
+  useEffect(() => {
+    if (phase !== 'flying') return
+    // After the transition completes, unmount
+    const t = setTimeout(() => {
+      setPhase('done')
+      document.body.style.overflow = ''
+    }, 1100) // matches transition duration below
+    return () => clearTimeout(t)
+  }, [phase])
+
+  if (phase === 'done') return null
+
+  const BIG = 320 // splash logo size in px (intrinsic)
+  const isFlying = phase === 'flying' && target
+
+  // We position the splash element fixed and centered in the viewport, then translate
+  // its center to the target center while scaling down to the target size.
+  const scale = isFlying ? target.size / BIG : 1
+  const tx = isFlying ? target.x - window.innerWidth / 2 : 0
+  const ty = isFlying ? target.y - window.innerHeight / 2 : 0
+
   return (
     <div
-      className="rounded-full bg-brand grid place-items-center shadow-card ring-2 ring-white"
-      style={{ width: size, height: size }}
-      aria-hidden
+      className="fixed inset-0 z-[60] grid place-items-center pointer-events-none"
+      style={{
+        background: isFlying
+          ? 'rgba(255, 251, 244, 0)'
+          : 'radial-gradient(ellipse 70% 60% at 50% 45%, rgba(245, 166, 35, 0.18), rgba(255, 251, 244, 1) 70%)',
+        transition: 'background 700ms ease-out',
+      }}
     >
-      <Sparkles size={Math.round(size * 0.55)} className="text-ink" strokeWidth={2.4} />
+      <img
+        ref={splashRef}
+        src="/logo.png"
+        alt=""
+        aria-hidden
+        draggable={false}
+        style={{
+          width: BIG,
+          height: BIG,
+          transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
+          transformOrigin: 'center center',
+          transition: isFlying
+            ? 'transform 1000ms cubic-bezier(0.65, 0, 0.35, 1), opacity 200ms ease-out 850ms'
+            : 'none',
+          opacity: isFlying ? 0 : 1,
+          filter: isFlying ? 'none' : 'drop-shadow(0 16px 40px rgba(245, 166, 35, 0.35))',
+          willChange: 'transform, opacity',
+        }}
+        className="object-contain select-none animate-fadeIn"
+      />
     </div>
   )
 }
@@ -333,12 +427,8 @@ function Hero() {
     <section id="top" className="hero-gradient relative overflow-hidden">
       <div className="hero-pattern absolute inset-0 opacity-50 pointer-events-none" />
       <div className="relative max-w-6xl mx-auto px-4 sm:px-6 pt-14 pb-20 sm:pt-20 sm:pb-28">
-        <div className="flex items-center gap-3 mb-8">
-          <LogoBadge size={56} />
-          <div className="leading-tight">
-            <div className="font-display font-extrabold text-lg tracking-tight">DYNAMIC DUSTERS</div>
-            <div className="text-xs text-muted font-medium">We Don’t Cut Corners, We Clean Them.</div>
-          </div>
+        <div className="mb-8">
+          <LogoBadge size={120} />
         </div>
 
         <h1 className="font-display font-extrabold text-4xl sm:text-5xl md:text-6xl tracking-tight max-w-3xl">
