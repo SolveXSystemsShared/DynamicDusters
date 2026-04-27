@@ -417,7 +417,191 @@ function useParallax({ strength = 12 } = {}) {
   return ref
 }
 
+/* ============================================================
+ * Scroll-experience layer
+ * ============================================================ */
+
+/* Global scroll Y + velocity store, updated by a single rAF loop
+ * that we initialise once per page. Components subscribe via hooks. */
+const scrollState = {
+  y: 0,
+  vy: 0,
+  height: 1,
+  initialized: false,
+  listeners: new Set(),
+}
+
+function initScrollLoop() {
+  if (scrollState.initialized) return
+  scrollState.initialized = true
+  let last = window.scrollY
+  let lastTs = performance.now()
+  const loop = (ts) => {
+    const cur = window.scrollY
+    const dt = Math.max(1, ts - lastTs)
+    const vy = (cur - last) / dt // px per ms
+    scrollState.y = cur
+    scrollState.vy = scrollState.vy * 0.7 + vy * 0.3 // smoothed velocity
+    scrollState.height = Math.max(1, document.documentElement.scrollHeight - window.innerHeight)
+    last = cur
+    lastTs = ts
+    scrollState.listeners.forEach((fn) => fn())
+    requestAnimationFrame(loop)
+  }
+  requestAnimationFrame(loop)
+}
+
+function useScrollSubscribe(fn) {
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    initScrollLoop()
+    scrollState.listeners.add(fn)
+    fn() // initial run
+    return () => scrollState.listeners.delete(fn)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+}
+
+/* Returns a ref + a callback ref-based progress hook.
+ * The progress is 0 when the element's top hits the viewport bottom,
+ * and 1 when its bottom passes the viewport top.
+ * Provides this via CSS variables on the element so styles can bind. */
+function useScrollProgress({ onProgress } = {}) {
+  const ref = useRef(null)
+  useScrollSubscribe(() => {
+    const el = ref.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    const vh = window.innerHeight
+    // Span: from element-enters-viewport to element-leaves-viewport
+    const start = vh
+    const end = -r.height
+    const raw = (start - r.top) / (start - end)
+    const p = Math.max(0, Math.min(1, raw))
+    el.style.setProperty('--scroll-progress', p.toFixed(4))
+    if (onProgress) onProgress(p, r)
+  })
+  return ref
+}
+
+/* Global scroll progress bar across page total */
+function ScrollProgressBar() {
+  const ref = useRef(null)
+  useScrollSubscribe(() => {
+    const el = ref.current
+    if (!el) return
+    const p = scrollState.y / scrollState.height
+    el.style.setProperty('--scroll-progress', Math.max(0, Math.min(1, p)).toFixed(4))
+  })
+  return <div ref={ref} className="scroll-progress" aria-hidden />
+}
+
+/* Smooth-scroll wrapper using rAF lerp. We intercept wheel events
+ * and animate window.scrollY toward a target. Disabled on touch
+ * (native momentum scroll is better) and reduced-motion. */
+function useSmoothScroll() {
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    if (window.matchMedia('(hover: none)').matches) return
+    if (matchMedia('(pointer: coarse)').matches) return
+    let target = window.scrollY
+    let current = target
+    let raf = 0
+    let active = false
+
+    const tick = () => {
+      current += (target - current) * 0.12
+      if (Math.abs(target - current) < 0.5) {
+        current = target
+        active = false
+        window.scrollTo(0, current)
+        return
+      }
+      window.scrollTo(0, current)
+      raf = requestAnimationFrame(tick)
+    }
+    const onWheel = (e) => {
+      // Allow modifier-driven zoom / horizontal scroll behaviour
+      if (e.ctrlKey || e.metaKey || e.deltaX !== 0) return
+      e.preventDefault()
+      target = Math.max(0, Math.min(
+        document.documentElement.scrollHeight - window.innerHeight,
+        target + e.deltaY
+      ))
+      if (!active) {
+        current = window.scrollY
+        active = true
+        raf = requestAnimationFrame(tick)
+      }
+    }
+    // Sync target if user uses keyboard, anchor, or touch
+    const onScroll = () => {
+      if (!active) target = window.scrollY
+    }
+
+    window.addEventListener('wheel', onWheel, { passive: false })
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      cancelAnimationFrame(raf)
+      window.removeEventListener('wheel', onWheel)
+      window.removeEventListener('scroll', onScroll)
+    }
+  }, [])
+}
+
+/* Cursor trail — N small dots trailing the cursor with progressive lag */
+function CursorTrail({ count = 6 }) {
+  const refs = useRef([])
+  refs.current = []
+  const setRef = (el) => el && refs.current.push(el)
+  const reduced = usePrefersReducedMotion()
+
+  useEffect(() => {
+    if (reduced) return
+    if (window.matchMedia('(hover: none)').matches) return
+    const dots = refs.current
+    if (!dots.length) return
+    const positions = dots.map(() => ({ x: window.innerWidth / 2, y: window.innerHeight / 2 }))
+    let mx = window.innerWidth / 2
+    let my = window.innerHeight / 2
+    let raf = 0
+    const onMove = (e) => { mx = e.clientX; my = e.clientY }
+    const tick = () => {
+      // First dot follows the cursor with high lerp; each subsequent dot
+      // chases the previous, producing a soft tail.
+      let prevX = mx, prevY = my
+      for (let i = 0; i < dots.length; i++) {
+        const ease = 0.32 - i * 0.035
+        positions[i].x += (prevX - positions[i].x) * ease
+        positions[i].y += (prevY - positions[i].y) * ease
+        const scale = 1 - i * 0.12
+        const opacity = 0.85 - i * 0.12
+        dots[i].style.transform = `translate3d(${positions[i].x}px, ${positions[i].y}px, 0) translate(-50%, -50%) scale(${scale.toFixed(2)})`
+        dots[i].style.opacity = opacity.toFixed(2)
+        prevX = positions[i].x
+        prevY = positions[i].y
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    window.addEventListener('mousemove', onMove, { passive: true })
+    raf = requestAnimationFrame(tick)
+    return () => {
+      cancelAnimationFrame(raf)
+      window.removeEventListener('mousemove', onMove)
+    }
+  }, [reduced])
+
+  return (
+    <>
+      {Array.from({ length: count }).map((_, i) => (
+        <span key={i} ref={setRef} className="cursor-trail-dot" aria-hidden />
+      ))}
+    </>
+  )
+}
+
 export default function App() {
+  useSmoothScroll()
   const [pkg, setPkg] = useState('')
   const [addLaundry, setAddLaundry] = useState(false)
   const [laundryLoads, setLaundryLoads] = useState(1)
@@ -522,7 +706,9 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-cream text-ink">
+      <ScrollProgressBar />
       <CursorGlow />
+      <CursorTrail count={6} />
       <LogoSplash />
       <Header />
       <Hero />
@@ -711,6 +897,36 @@ function Hero() {
   const primaryCTA = useMagnetic({ strength: 0.3, radius: 110 })
   const ghostCTA = useMagnetic({ strength: 0.25, radius: 110 })
 
+  // Scroll choreography — bind transforms to scroll progress through the hero
+  const sectionRef = useRef(null)
+  const stageRef = useRef(null)
+  const logoStageRef = useRef(null)
+  const blobARef = useRef(null)
+  const blobBRef = useRef(null)
+  const blobCRef = useRef(null)
+
+  useScrollSubscribe(() => {
+    const section = sectionRef.current
+    if (!section) return
+    const r = section.getBoundingClientRect()
+    const vh = window.innerHeight
+    // Progress from 0 (hero fully on-screen at top) to 1 (hero scrolled past)
+    const p = Math.max(0, Math.min(1, -r.top / Math.max(1, vh * 0.9)))
+    if (stageRef.current) {
+      stageRef.current.style.setProperty('--hero-y', `${(-p * 60).toFixed(2)}px`)
+      stageRef.current.style.setProperty('--hero-scale', `${(1 - p * 0.06).toFixed(4)}`)
+      stageRef.current.style.setProperty('--hero-opacity', `${(1 - p * 0.65).toFixed(3)}`)
+    }
+    if (logoStageRef.current) {
+      logoStageRef.current.style.setProperty('--hero-logo-rot', `${(p * 14).toFixed(2)}deg`)
+      logoStageRef.current.style.setProperty('--hero-logo-scale', `${(1 - p * 0.18).toFixed(4)}`)
+    }
+    // Blobs drift at different rates — depth illusion
+    if (blobARef.current) blobARef.current.style.transform = `translate3d(${(-p * 80).toFixed(1)}px, ${(-p * 30).toFixed(1)}px, 0)`
+    if (blobBRef.current) blobBRef.current.style.transform = `translate3d(${(p * 60).toFixed(1)}px, ${(p * 50).toFixed(1)}px, 0)`
+    if (blobCRef.current) blobCRef.current.style.transform = `translate3d(${(p * 100).toFixed(1)}px, ${(-p * 80).toFixed(1)}px, 0)`
+  })
+
   // Sparkle positions — fixed seed so layout is stable per render
   const sparkles = [
     { left: '8%',  top: '70%', size: 6,  delay: 0,    dur: 8.5 },
@@ -729,12 +945,12 @@ function Hero() {
   const headlineAccent = ['Booked', 'in', 'Seconds.']
 
   return (
-    <section id="top" className="hero-gradient relative overflow-hidden">
-      {/* Floating colored blobs */}
+    <section ref={sectionRef} id="top" className="hero-gradient relative overflow-hidden">
+      {/* Floating colored blobs (scroll-driven offsets) */}
       <div className="absolute inset-0 pointer-events-none" aria-hidden>
-        <span className="blob blob-a" />
-        <span className="blob blob-b" />
-        <span className="blob blob-c" />
+        <span ref={blobARef} className="blob blob-a scroll-driven" />
+        <span ref={blobBRef} className="blob blob-b scroll-driven" />
+        <span ref={blobCRef} className="blob blob-c scroll-driven" />
       </div>
 
       {/* Dotted overlay */}
@@ -758,9 +974,11 @@ function Hero() {
         ))}
       </div>
 
-      <div className="relative max-w-6xl mx-auto px-4 sm:px-6 pt-14 pb-20 sm:pt-20 sm:pb-28">
+      <div ref={stageRef} className="hero-stage relative max-w-6xl mx-auto px-4 sm:px-6 pt-14 pb-20 sm:pt-20 sm:pb-28">
         <div ref={logoParallax} className="mb-8 inline-block">
-          <LogoBadge size={140} />
+          <div ref={logoStageRef} className="hero-logo-stage inline-block">
+            <LogoBadge size={140} />
+          </div>
         </div>
 
         <h1 className="font-display font-extrabold text-4xl sm:text-5xl md:text-6xl tracking-tight max-w-3xl">
@@ -843,8 +1061,9 @@ function TrustItem({ icon: Icon, text }) {
 /* ----------------- Packages ----------------- */
 function Packages({ onSelect, selected }) {
   return (
-    <section id="packages" className="py-20 sm:py-24">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6">
+    <section id="packages" className="relative overflow-hidden py-20 sm:py-24">
+      <BgNumeral text="01" right="-3vw" />
+      <div className="relative max-w-6xl mx-auto px-4 sm:px-6 z-10">
         <Reveal>
           <SectionHeading
             eyebrow="Packages"
@@ -855,13 +1074,84 @@ function Packages({ onSelect, selected }) {
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5 mt-12">
           {PACKAGES.map((p, i) => (
-            <Reveal key={p.id} delay={i * 90}>
+            <ScrollStaggerCard key={p.id} index={i}>
               <PackageCard p={p} isSelected={selected === p.id} onSelect={onSelect} />
-            </Reveal>
+            </ScrollStaggerCard>
           ))}
         </div>
       </div>
     </section>
+  )
+}
+
+/* Wrapper that animates each card in from alternating sides with rotation
+ * tied to its own scroll progress. More dramatic than a simple Reveal. */
+function ScrollStaggerCard({ index, children }) {
+  const ref = useRef(null)
+  const [visible, setVisible] = useState(false)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setVisible(true)
+      return
+    }
+    const obs = new IntersectionObserver(
+      (entries) => entries.forEach((e) => {
+        if (e.isIntersecting) {
+          setVisible(true)
+          obs.unobserve(el)
+        }
+      }),
+      { threshold: 0.2, rootMargin: '0px 0px -60px 0px' }
+    )
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [])
+  const fromLeft = index % 2 === 0
+  const x = visible ? '0px' : (fromLeft ? '-80px' : '80px')
+  const rot = visible ? '0deg' : (fromLeft ? '-6deg' : '6deg')
+  const opacity = visible ? 1 : 0
+  return (
+    <div
+      ref={ref}
+      style={{
+        transform: `translate3d(${x}, ${visible ? 0 : 40}px, 0) rotate(${rot})`,
+        opacity,
+        transition: `transform 900ms cubic-bezier(0.22, 1, 0.36, 1) ${index * 110}ms, opacity 700ms ease-out ${index * 110}ms`,
+        willChange: 'transform, opacity',
+      }}
+    >
+      {children}
+    </div>
+  )
+}
+
+/* Massive faded background numeral that parallaxes vertically with scroll. */
+function BgNumeral({ text, left, right }) {
+  const ref = useRef(null)
+  useScrollSubscribe(() => {
+    const el = ref.current
+    if (!el?.parentElement) return
+    const r = el.parentElement.getBoundingClientRect()
+    const vh = window.innerHeight
+    const span = vh + r.height
+    const p = Math.max(0, Math.min(1, (vh - r.top) / span))
+    el.style.setProperty('--numeral-y', `${(p * 220 - 110).toFixed(1)}px`)
+  })
+  return (
+    <span
+      ref={ref}
+      className="bg-numeral select-none"
+      style={{
+        ...(left !== undefined ? { left } : {}),
+        ...(right !== undefined ? { right } : {}),
+        top: '50%',
+      }}
+      aria-hidden
+    >
+      {text}
+    </span>
   )
 }
 
@@ -933,9 +1223,37 @@ function HowItWorks() {
     { n: 3, title: 'Get Confirmed', text: 'We reply with written confirmation within 2 hours.' },
     { n: 4, title: 'We Clean', text: 'Cleaner arrives on time, ready to deliver.' },
   ]
+
+  // Section-level scroll progress drives a giant numeral that slides
+  // horizontally in the background as the user scrolls through the steps.
+  const sectionRef = useRef(null)
+  const numeralRef = useRef(null)
+  useScrollSubscribe(() => {
+    const sec = sectionRef.current
+    const num = numeralRef.current
+    if (!sec || !num) return
+    const r = sec.getBoundingClientRect()
+    const vh = window.innerHeight
+    const span = vh + r.height
+    const p = Math.max(0, Math.min(1, (vh - r.top) / span))
+    // -120px (above) to +120px (below)
+    num.style.setProperty('--numeral-y', `${(p * 240 - 120).toFixed(1)}px`)
+    num.style.opacity = (0.5 + Math.sin(p * Math.PI) * 0.5).toFixed(2)
+  })
+
   return (
-    <section id="process" className="py-20 sm:py-24 bg-white border-y border-line">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6">
+    <section ref={sectionRef} id="process" className="relative overflow-hidden py-20 sm:py-24 bg-white border-y border-line">
+      {/* Massive parallax numeral spanning the section background */}
+      <span
+        ref={numeralRef}
+        className="bg-numeral select-none"
+        style={{ left: '-2vw', top: '50%', transform: 'translateY(-50%)' }}
+        aria-hidden
+      >
+        02
+      </span>
+
+      <div className="relative max-w-6xl mx-auto px-4 sm:px-6 z-10">
         <Reveal>
           <SectionHeading
             eyebrow="How it works"
@@ -995,8 +1313,9 @@ function BookingForm(props) {
   ]
 
   return (
-    <section id="book" className="py-20 sm:py-24 bg-cream">
-      <div className="max-w-3xl mx-auto px-4 sm:px-6">
+    <section id="book" className="relative overflow-hidden py-20 sm:py-24 bg-cream">
+      <BgNumeral text="03" left="-4vw" />
+      <div className="relative max-w-3xl mx-auto px-4 sm:px-6 z-10">
         <Reveal>
           <SectionHeading
             eyebrow="Book"
@@ -1419,8 +1738,9 @@ function Stepper({ value, setValue, min = 0, max = 99, suffixOnMax }) {
 /* ----------------- Service Area ----------------- */
 function ServiceArea() {
   return (
-    <section id="area" className="py-20 sm:py-24 bg-white border-y border-line">
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 text-center">
+    <section id="area" className="relative overflow-hidden py-20 sm:py-24 bg-white border-y border-line">
+      <BgNumeral text="04" right="-3vw" />
+      <div className="relative max-w-5xl mx-auto px-4 sm:px-6 text-center z-10">
         <Reveal>
           <SectionHeading
             eyebrow="Coverage"
