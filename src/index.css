@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background-color: #FFFBF4;
+  color: #1A1A1A;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4 {
+  font-family: 'Poppins', 'Inter', system-ui, sans-serif;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+
+/* Focus visibility for accessibility */
+*:focus-visible {
+  outline: 2px solid #F5A623;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Hero gradient */
+.hero-gradient {
+  background:
+    radial-gradient(ellipse 80% 60% at 80% 20%, rgba(245, 166, 35, 0.25), transparent 60%),
+    radial-gradient(ellipse 60% 50% at 10% 80%, rgba(245, 166, 35, 0.18), transparent 60%),
+    linear-gradient(180deg, #FFFBF4 0%, #FFF6E5 100%);
+}
+
+/* Subtle dotted background pattern for hero */
+.hero-pattern {
+  background-image: radial-gradient(rgba(245, 166, 35, 0.18) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
